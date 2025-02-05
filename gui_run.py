@@ -6,7 +6,9 @@ import speech_recognition as sr
 import pyttsx3
 import time
 import pyperclip  # For Copy Output functionality
-import markdown  # For markdown processing
+
+import mistune
+from bs4 import BeautifulSoup
 
 class DeepSeekChatbot:
     def __init__(self, root):
@@ -25,7 +27,7 @@ class DeepSeekChatbot:
         self.status_button.pack(pady=5)
 
         # Chat History (Scrollable)
-        self.chat_history = scrolledtext.ScrolledText(root, width=80, height=20, font=("Arial", 12), bg="#34495e", fg="white")
+        self.chat_history = scrolledtext.ScrolledText(root, width=75, height=20, font=("Arial", 12), bg="#34495e", fg="white")
         self.chat_history.pack(pady=10, fill=tk.Y, expand=True)
         self.chat_history.config(state=tk.DISABLED)  # Read-only
 
@@ -71,22 +73,44 @@ class DeepSeekChatbot:
     def toggle_speaker(self):
         """Toggle between mute and speaker functionality."""
         if self.is_muted:
-            # If currently muted, unmute and start speaking
-            self.speaker_btn.config(text="🔊")  # Change to speaker icon
+            self.speaker_btn.config(text="🔊")
             self.is_muted = False
             if self.latest_response:
-                self.speak_output()  # Speak the latest response
+                self.start_reading()  # Start reading
         else:
-            # If currently speaking, mute
-            self.speaker_btn.config(text="🔇")  # Change to mute icon
+            self.speaker_btn.config(text="🔇")
             self.is_muted = True
-            if self.speech_thread and self.speech_thread.is_alive():
-                self.stop_speech()  # Stop speaking
+            self.stop_reading()  # Stop reading
 
-    def stop_speech(self):
-        """Stop the speech synthesis."""
-        if self.speech_thread:
-            self.speech_thread.join()  # Wait for the speech thread to finish
+
+    def start_reading(self):
+        """Start reading the latest response immediately."""
+        if self.latest_response:
+            self.is_speaking = True  # Set flag to indicate speech is active
+            self.speaker_btn.config(text="🔇")  # Change button icon
+            print("paContinue")  # Signal reading start
+            self.speech_thread = threading.Thread(target=self.speak_output, daemon=True)
+            self.speech_thread.start()
+
+    def stop_reading(self):
+        """Immediately stop reading the output."""
+        if self.speech_thread and self.speech_thread.is_alive():
+            print("paAbort")  # Signal reading stopped
+            self.is_speaking = False  # Reset flag
+            self.speaker_btn.config(text="🔊")  # Change button icon
+            self.speech_thread.join(timeout=0.1)  # Attempt immediate stop
+
+    def restart_reading(self):
+        """Restart the reading process."""
+        self.stop_reading()  # Stop current reading
+        self.start_reading()  # Start again
+        print("paComplete")  # Signal completion of restart
+
+    def markdown_to_plain(md_text):
+        html = mistune.markdown(md_text)
+        soup = BeautifulSoup(html, "html.parser")
+        return soup.get_text()
+
 
     def run_deepseek(self, prompt):
         """Run DeepSeek model and process the output."""
@@ -94,11 +118,12 @@ class DeepSeekChatbot:
         self.send_btn.config(state=tk.DISABLED)
         try:
             self.process = subprocess.Popen(
-                ["ollama", "run", "deepseek-r1:8b"],
+                ["ollama", "run", "deepseek-r1:1.5b"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                bufsize=1
             )
 
             # Send user input to DeepSeek
@@ -115,10 +140,13 @@ class DeepSeekChatbot:
             response = ""
             for line in iter(self.process.stdout.readline, ""):
                 response += line
-                self.typewriter_effect(line, "bot")
+                self.typewriter_effect((line), "bot")
+
 
             self.latest_response = response.strip()  # Store response for speech output
             self.chat_history.insert(tk.END, "\n", "bot")
+
+
             self.chat_history.tag_config("bot", foreground="lightgreen")
             self.chat_history.config(state=tk.DISABLED)
             self.status_button.config(text="Idle", bg="#28a745")
@@ -209,14 +237,17 @@ class DeepSeekChatbot:
                 self.prompt_entry.insert(0, text)
 
             except sr.UnknownValueError:
-                self.prompt_entry.delete(0, tk.END)
-                self.prompt_entry.insert(0, "❌ Couldn't recognize speech.")
+                text = "❌ Couldn't recognize speech."
             except sr.RequestError:
-                self.prompt_entry.delete(0, tk.END)
-                self.prompt_entry.insert(0, "❌ Speech service unavailable.")
+                text = "❌ Speech service unavailable."
             except sr.WaitTimeoutError:
-                self.prompt_entry.delete(0, tk.END)
-                self.prompt_entry.insert(0, "❌ No speech detected. Try again.")
+                text = "❌ No speech detected. Try again."
+            except Exception as e:
+                text = f"❌ Error: {str(e)}"
+
+                self.root.after(0, self.prompt_entry.delete, 0, tk.END)
+                self.root.after(0, self.prompt_entry.insert, 0, text)
+
             except Exception as e:
                 self.prompt_entry.delete(0, tk.END)
                 self.prompt_entry.insert(0, f"❌ Error: {e}")
