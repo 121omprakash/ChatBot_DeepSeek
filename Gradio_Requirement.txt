@@ -1,0 +1,6 @@
+gradio
+speechrecognition
+pyttsx3
+pyperclip
+bs4
+beautifulsoup4
